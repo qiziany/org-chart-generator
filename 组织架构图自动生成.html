@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>组织架构图生成器</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Microsoft YaHei UI", "SimHei", sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar {
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            padding: 10px 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            flex-wrap: wrap;
+        }
+        .toolbar h1 {
+            font-size: 18px;
+            color: #333;
+            margin-right: 30px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #1976D2; color: white; }
+        .btn-primary:hover { background: #1565C0; }
+        .btn-success { background: #388E3C; color: white; }
+        .btn-success:hover { background: #2E7D32; }
+        .btn-warning { background: #F57C00; color: white; }
+        .btn-warning:hover { background: #EF6C00; }
+        .btn-secondary { background: #757575; color: white; }
+        .btn-secondary:hover { background: #616161; }
+        .btn-info { background: #0097A7; color: white; }
+        .btn-info:hover { background: #00838F; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        #fileInput { display: none; }
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .canvas-container {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            background: #fafafa;
+        }
+        #canvasWrapper {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+            cursor: grab;
+        }
+        #canvasWrapper.dragging {
+            cursor: grabbing;
+        }
+        #canvasWrapper.node-selected {
+            cursor: ew-resize;
+        }
+        #canvas {
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.05s ease-out;
+        }
+        .config-panel {
+            width: 300px;
+            background: white;
+            border-left: 1px solid #ddd;
+            padding: 15px;
+            overflow-y: auto;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+        .config-panel.hidden {
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        .config-section {
+            margin-bottom: 20px;
+        }
+        .config-section h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #1976D2;
+        }
+        .level-item {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .level-item h4 {
+            font-size: 13px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .level-item label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        .level-item input[type="number"] {
+            width: 55px;
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .level-item select {
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .hint {
+            text-align: center;
+            color: #999;
+            font-size: 16px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 5px;
+            z-index: 100;
+            background: white;
+            padding: 5px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+        }
+        .zoom-btn:hover { background: #f0f0f0; }
+        .zoom-level {
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+            color: #666;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-width: 60px;
+            justify-content: center;
+        }
+        .global-config {
+            background: #e8f4fc;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .global-config label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #333;
+        }
+        .global-config input[type="number"] {
+            width: 60px;
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        /* 操作技巧 */
+        .tips-box {
+            background: #fff3e0;
+            border: 1px solid #ffcc80;
+            border-radius: 4px;
+            padding: 10px 12px;
+            margin-bottom: 15px;
+        }
+        .tips-box h4 {
+            font-size: 13px;
+            color: #e65100;
+            margin-bottom: 8px;
+        }
+        .tips-box ul {
+            margin: 0;
+            padding-left: 18px;
+            font-size: 12px;
+            color: #666;
+            line-height: 1.8;
+        }
+        /* 全屏模式样式 */
+        body.fullscreen-mode .toolbar {
+            display: none;
+        }
+        body.fullscreen-mode .config-panel {
+            display: none;
+        }
+        body.fullscreen-mode .canvas-container {
+            height: 100vh;
+        }
+        .exit-fullscreen-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: none;
+        }
+        body.fullscreen-mode .exit-fullscreen-btn {
+            display: block;
+        }
+        .exit-fullscreen-btn:hover {
+            background: rgba(0,0,0,0.85);
+        }
+        /* 节点选中样式 */
+        .node-shape {
+            transition: stroke-width 0.2s, stroke 0.2s;
+        }
+        .node-shape.selected {
+            stroke-width: 3;
+            stroke: #1976D2 !important;
+        }
+        .node-shape.hoverable:hover {
+            stroke-width: 2.5;
+            cursor: ew-resize;
+        }
+        /* 间距标签高亮 */
+        .spacing-label {
+            color: #1976D2;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <h1>组织架构图生成器</h1>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">📁 打开文件</button>
+        <button class="btn btn-primary" onclick="downloadTemplate()">📥 下载模板</button>
+        <button class="btn btn-success" id="exportPngBtn" onclick="exportPNG()" disabled>📷 导出PNG</button>
+        <button class="btn btn-warning" id="exportPdfBtn" onclick="exportPDF()" disabled>📄 导出PDF</button>
+        <button class="btn btn-info" id="fullscreenBtn" onclick="toggleFullscreen()" disabled>⛶ 全屏展示</button>
+        <button class="btn btn-secondary" onclick="resetView()">重置视图</button>
+        <button class="btn btn-secondary" id="resetLayoutBtn" onclick="resetLayout()" style="display:none;">重置布局</button>
+    </div>
+
+    <div class="main-content">
+        <div class="canvas-container" id="canvasContainer">
+            <div class="hint" id="hint">
+                请点击「打开文件」导入 Excel 或 CSV 文件<br><br>
+                支持格式：.xlsx .xls .csv
+            </div>
+            <div id="canvasWrapper" style="display:none;">
+                <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+            </div>
+            <button class="exit-fullscreen-btn" onclick="toggleFullscreen()">退出全屏 (ESC)</button>
+            <div class="zoom-controls" id="zoomControls" style="display:none;">
+                <button class="zoom-btn" onclick="zoomOut()">−</button>
+                <div class="zoom-level" id="zoomLevel">100%</div>
+                <button class="zoom-btn" onclick="zoomIn()">+</button>
+            </div>
+        </div>
+
+        <div class="config-panel" id="configPanel">
+            <div class="tips-box">
+                <h4>💡 操作技巧</h4>
+                <ul>
+                    <li>点击节点可横向拖动调整位置</li>
+                    <li>点击 <b>−</b> 隐藏下级部门，点击 <b>+</b> 展开</li>
+                    <li>鼠标滚轮缩放，拖拽空白处平移</li>
+                </ul>
+            </div>
+            
+            <div class="config-section">
+                <h3>全局纵向间距</h3>
+                <div class="global-config">
+                    <label>层级纵向间距: <input type="number" id="globalVSpacing" value="80" min="30" max="200" onchange="onConfigChange()">px</label>
+                </div>
+            </div>
+            <div class="config-section">
+                <h3>层级配置</h3>
+                <div id="levelConfigs"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局状态
+        let treeData = null;
+        let allNodes = [];
+        let nodePositions = {};
+        let collapsedNodes = new Set();
+        let maxLevel = 0;
+        let currentZoom = 1;
+        let panX = 0;
+        let panY = 0;
+        let isDraggingCanvas = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let isFullscreen = false;
+
+        // 节点拖拽状态
+        let selectedNodeId = null;
+        let isDraggingNode = false;
+        let nodeStartX = 0;
+        let nodeStartMouseX = 0;
+
+        // 样式配置 - 统一黑白配色
+        const NODE_COLOR = { fill: 'white', stroke: '#333333', text: '#333333' };
+
+        let levelConfig = {};
+        let levelSpacing = {};
+        let levelHSpacing = {}; // 每个层级的横向间距
+        let nodeOffsets = {}; // 节点的横向偏移量（用于拖拽）
+
+        // 文件输入处理
+        document.getElementById('fileInput').addEventListener('change', handleFile);
+
+        function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    let data;
+                    if (file.name.endsWith('.csv')) {
+                        data = parseCSV(e.target.result);
+                    } else {
+                        data = parseExcel(e.target.result);
+                    }
+                    buildTree(data);
+                    initializeConfig();
+                    renderChart();
+                    document.getElementById('exportPngBtn').disabled = false;
+                    document.getElementById('exportPdfBtn').disabled = false;
+                    document.getElementById('fullscreenBtn').disabled = false;
+                    document.getElementById('resetLayoutBtn').style.display = 'inline-block';
+                } catch (error) {
+                    alert('解析文件失败：' + error.message);
+                }
+            };
+            
+            if (file.name.endsWith('.csv')) {
+                reader.readAsText(file, 'UTF-8');
+            } else {
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        // 下载导入模板
+        function downloadTemplate() {
+            const wb = XLSX.utils.book_new();
+            
+            // 示例数据（放在第一个sheet）
+            const exampleData = [
+                ['部门名称', '上级部门'],
+                ['集团总部', '——'],
+                ['财务管理中心', '集团总部'],
+                ['人力资源中心', '集团总部'],
+                ['市场营销中心', '集团总部'],
+                ['研发中心', '集团总部'],
+                ['财务部', '财务管理中心'],
+                ['资金部', '财务管理中心'],
+                ['招聘部', '人力资源中心'],
+                ['培训部', '人力资源中心'],
+                ['品牌部', '市场营销中心'],
+                ['销售部', '市场营销中心'],
+                ['前端开发部', '研发中心'],
+                ['后端开发部', '研发中心']
+            ];
+            
+            // 使用说明
+            const instructionData = [
+                ['组织架构图导入模板'],
+                [''],
+                ['填写规则：'],
+                ['1. 部门名称：必填'],
+                ['2. 上级部门：填写直接上级部门名称'],
+                ['3. 第一层部门：上级部门填写"——"'],
+                [''],
+                ['注意：'],
+                ['• 上级部门不得填写自身名称'],
+                ['• 支持同名部门，会独立显示'],
+                [''],
+                ['⚠️ 导入时读取第一个sheet'],
+                ['• 示例数据sheet可直接导入测试'],
+                ['• 导入自己的数据前，请修改或替换示例数据sheet']
+            ];
+            
+            // 创建示例数据sheet（放第一个）
+            const ws1 = XLSX.utils.aoa_to_sheet(exampleData);
+            ws1['!cols'] = [{ wch: 18 }, { wch: 18 }];
+            XLSX.utils.book_append_sheet(wb, ws1, '示例数据');
+            
+            // 创建说明sheet
+            const ws2 = XLSX.utils.aoa_to_sheet(instructionData);
+            ws2['!cols'] = [{ wch: 35 }];
+            XLSX.utils.book_append_sheet(wb, ws2, '使用说明');
+            
+            // 下载文件
+            XLSX.writeFile(wb, '组织架构图导入模板.xlsx');
+        }
+
+        function parseCSV(text) {
+            const lines = text.split('\n').filter(line => line.trim());
+            const headers = lines[0].split(',').map(h => h.trim());
+            
+            const nameIdx = headers.findIndex(h => h.includes('部门名称') || h.includes('名称') || h.toLowerCase().includes('name'));
+            const parentIdx = headers.findIndex(h => h.includes('上级部门') || h.includes('上级') || h.toLowerCase().includes('parent'));
+
+            if (nameIdx === -1 || parentIdx === -1) {
+                throw new Error('未找到必需的列：部门名称、上级部门');
+            }
+
+            const result = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim());
+                if (values.length > Math.max(nameIdx, parentIdx)) {
+                    result.push({
+                        id: `row_${i}`, // 使用行号作为唯一ID
+                        name: values[nameIdx],
+                        parentName: values[parentIdx] || '' // 保存上级部门名称
+                    });
+                }
+            }
+            return result;
+        }
+
+        function parseExcel(buffer) {
+            const workbook = XLSX.read(buffer, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet);
+            
+            const firstRow = data[0] || {};
+            const keys = Object.keys(firstRow);
+            
+            const nameKey = keys.find(k => k.includes('部门名称') || k.includes('名称') || k.toLowerCase().includes('name'));
+            const parentKey = keys.find(k => k.includes('上级部门') || k.includes('上级') || k.toLowerCase().includes('parent'));
+
+            if (!nameKey || !parentKey) {
+                throw new Error('未找到必需的列：部门名称、上级部门');
+            }
+
+            return data.map((row, index) => ({
+                id: `row_${index}`, // 使用行号作为唯一ID
+                name: row[nameKey] || '',
+                parentName: row[parentKey] || '' // 保存上级部门名称
+            }));
+        }
+
+        function buildTree(data) {
+            const nodeMap = {}; // id -> node
+            
+            // 第一遍：创建所有节点
+            data.forEach((item, index) => {
+                nodeMap[item.id] = {
+                    id: item.id,
+                    name: item.name,
+                    parentName: item.parentName,
+                    parentId: null,
+                    children: [],
+                    level: 0
+                };
+            });
+
+            // 建立名称到节点ID列表的映射（同名部门可能有多个）
+            const nameToNodes = {};
+            data.forEach(item => {
+                if (!nameToNodes[item.name]) {
+                    nameToNodes[item.name] = [];
+                }
+                nameToNodes[item.name].push(item.id);
+            });
+
+            // 第二遍：建立父子关系
+            data.forEach(item => {
+                const node = nodeMap[item.id];
+                const parentName = item.parentName;
+                
+                // 上级部门为空或为"——" → 第一层级（根节点）
+                if (!parentName || parentName.trim() === '' || parentName === '——') {
+                    node.parentId = null;
+                } else {
+                    // 查找上级部门对应的节点
+                    const possibleParents = nameToNodes[parentName] || [];
+                    if (possibleParents.length > 0) {
+                        // 找到上级部门，建立关联
+                        node.parentId = possibleParents[possibleParents.length - 1];
+                    } else {
+                        // 上级部门不在数据中，该节点也作为根节点
+                        node.parentId = null;
+                    }
+                }
+            });
+
+            // 建立children关系
+            const roots = [];
+            Object.values(nodeMap).forEach(node => {
+                if (node.parentId && nodeMap[node.parentId]) {
+                    nodeMap[node.parentId].children.push(node);
+                } else {
+                    roots.push(node);
+                }
+            });
+
+            // 设置层级
+            function setLevel(node, level) {
+                node.level = level;
+                maxLevel = Math.max(maxLevel, level);
+                node.children.forEach(child => setLevel(child, level + 1));
+            }
+            roots.forEach(root => setLevel(root, 0));
+
+            treeData = { roots, nodeMap };
+            allNodes = Object.values(nodeMap);
+        }
+
+        // 计算文字宽度
+        function getTextWidth(text, fontSize) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `bold ${fontSize}px "Microsoft YaHei UI", "SimHei", sans-serif`;
+            return ctx.measureText(text).width;
+        }
+
+        // 计算同层级最大形状尺寸
+        function calculateLevelSizes() {
+            const levelNodes = {};
+            allNodes.forEach(node => {
+                if (!levelNodes[node.level]) levelNodes[node.level] = [];
+                levelNodes[node.level].push(node);
+            });
+
+            Object.keys(levelNodes).forEach(level => {
+                const nodes = levelNodes[level];
+                const config = levelConfig[level];
+                if (!config) return;
+
+                let maxWidth = config.width;
+                let maxHeight = config.height;
+
+                nodes.forEach(node => {
+                    if (config.direction === 'horizontal') {
+                        const textWidth = getTextWidth(node.name, config.fontSize);
+                        const neededWidth = textWidth + 20;
+                        maxWidth = Math.max(maxWidth, Math.ceil(neededWidth));
+                    } else {
+                        const charCount = node.name.length;
+                        const neededHeight = charCount * config.fontSize * 1.2 + 20;
+                        maxHeight = Math.max(maxHeight, Math.ceil(neededHeight));
+                    }
+                });
+
+                config.width = maxWidth;
+                config.height = maxHeight;
+            });
+        }
+
+        function initializeConfig() {
+            levelConfig = {};
+            levelSpacing = {};
+            levelHSpacing = {};
+            nodeOffsets = {};
+            
+            for (let i = 0; i <= maxLevel; i++) {
+                if (i === 0) {
+                    levelConfig[i] = { width: 140, height: 50, fontSize: 14, direction: 'horizontal' };
+                } else if (i === 1) {
+                    levelConfig[i] = { width: 120, height: 45, fontSize: 13, direction: 'horizontal' };
+                } else {
+                    levelConfig[i] = { width: 50, height: 100, fontSize: 11, direction: 'vertical' };
+                }
+                levelSpacing[i] = 80;
+                levelHSpacing[i] = 15; // 每个层级的默认横向间距
+            }
+
+            calculateLevelSizes();
+            updateConfigPanel();
+            
+            panX = 0;
+            panY = 0;
+            currentZoom = 1;
+            selectedNodeId = null;
+        }
+
+        function updateConfigPanel() {
+            // 显示所有层级配置，第一层无横向间距
+            const levelConfigsHtml = Object.entries(levelConfig)
+                .map(([level, config]) => {
+                    const levelNum = parseInt(level);
+                    const isFirstLevel = levelNum === 0;
+                    
+                    return `
+                <div class="level-item">
+                    <h4>第${levelNum + 1}层</h4>
+                    <label>宽度: <input type="number" id="width_${level}" value="${config.width}" min="30" onchange="onLevelSizeChange()"></label>
+                    <label>高度: <input type="number" id="height_${level}" value="${config.height}" min="30" onchange="onLevelSizeChange()"></label>
+                    <label>字号: <input type="number" id="fontSize_${level}" value="${config.fontSize}" min="8" onchange="onConfigChange()"></label>
+                    <label>方向: 
+                        <select id="direction_${level}" onchange="onConfigChange()">
+                            <option value="horizontal" ${config.direction === 'horizontal' ? 'selected' : ''}>横向</option>
+                            <option value="vertical" ${config.direction === 'vertical' ? 'selected' : ''}>竖向</option>
+                        </select>
+                    </label>
+                    ${!isFirstLevel ? `<label class="spacing-label">横向间距: <input type="number" id="hspacing_${level}" value="${levelHSpacing[level] || 15}" min="5" max="100" onchange="onConfigChange()">px</label>` : ''}
+                </div>
+            `;
+            }).join('');
+            
+            document.getElementById('levelConfigs').innerHTML = levelConfigsHtml;
+        }
+
+        function onLevelSizeChange() {
+            Object.keys(levelConfig).forEach(level => {
+                levelConfig[level].width = parseInt(document.getElementById(`width_${level}`)?.value) || 120;
+                levelConfig[level].height = parseInt(document.getElementById(`height_${level}`)?.value) || 50;
+            });
+            calculateLevelSizes();
+            updateConfigPanel();
+            renderChart();
+        }
+
+        function onConfigChange() {
+            const globalVSpacing = parseInt(document.getElementById('globalVSpacing')?.value) || 80;
+            
+            Object.keys(levelSpacing).forEach(level => {
+                levelSpacing[level] = globalVSpacing;
+            });
+
+            Object.keys(levelConfig).forEach(level => {
+                levelConfig[level].fontSize = parseInt(document.getElementById(`fontSize_${level}`)?.value) || 13;
+                levelConfig[level].direction = document.getElementById(`direction_${level}`)?.value || 'horizontal';
+            });
+
+            // 读取每个层级的横向间距
+            Object.keys(levelHSpacing).forEach(level => {
+                const input = document.getElementById(`hspacing_${level}`);
+                if (input) {
+                    levelHSpacing[level] = parseInt(input.value) || 15;
+                }
+            });
+
+            renderChart();
+        }
+
+        function calculateLayout() {
+            nodePositions = {};
+            
+            function getSubtreeWidth(node) {
+                const config = levelConfig[node.level] || levelConfig[0];
+                if (node.children.length === 0 || collapsedNodes.has(node.id)) {
+                    return config.width;
+                }
+                // 使用该节点的层级间距（子节点所在的层级）
+                const childLevel = node.children[0].level;
+                const hSpacing = levelHSpacing[childLevel] || 15;
+                
+                const childrenWidth = node.children.reduce((sum, child) => {
+                    return sum + getSubtreeWidth(child) + hSpacing;
+                }, -hSpacing);
+                return Math.max(config.width, childrenWidth);
+            }
+
+            function layoutNode(node, leftBound, y) {
+                const config = levelConfig[node.level] || levelConfig[0];
+                const subtreeWidth = getSubtreeWidth(node);
+                
+                // 基础位置 + 用户拖拽偏移
+                const baseX = leftBound + (subtreeWidth - config.width) / 2;
+                const offsetX = nodeOffsets[node.id] || 0;
+                const x = baseX + offsetX;
+                
+                nodePositions[node.id] = { x, y, width: config.width, height: config.height };
+
+                if (node.children.length > 0 && !collapsedNodes.has(node.id)) {
+                    const spacing = levelSpacing[node.level] || 80;
+                    const childY = y + config.height + spacing;
+                    const childLevel = node.children[0].level;
+                    const hSpacing = levelHSpacing[childLevel] || 15;
+                    
+                    let totalChildWidth = node.children.reduce((sum, child) => {
+                        return sum + getSubtreeWidth(child) + hSpacing;
+                    }, -hSpacing);
+                    
+                    // 居中分布 + 考虑父节点的偏移
+                    let childLeft = leftBound + (subtreeWidth - totalChildWidth) / 2;
+                    
+                    node.children.forEach(child => {
+                        const childWidth = getSubtreeWidth(child);
+                        layoutNode(child, childLeft, childY);
+                        childLeft += childWidth + hSpacing;
+                    });
+                }
+            }
+
+            let totalWidth = 0;
+            const rootHSpacing = levelHSpacing[1] || 15; // 第一层子节点的间距
+            treeData.roots.forEach(root => {
+                totalWidth += getSubtreeWidth(root) + rootHSpacing;
+            });
+            totalWidth -= rootHSpacing;
+
+            let currentX = 0;
+            treeData.roots.forEach(root => {
+                const width = getSubtreeWidth(root);
+                layoutNode(root, currentX, 0);
+                currentX += width + rootHSpacing;
+            });
+
+            let minX = Infinity, maxX = -Infinity, maxY = 0;
+            Object.values(nodePositions).forEach(pos => {
+                minX = Math.min(minX, pos.x);
+                maxX = Math.max(maxX, pos.x + pos.width);
+                maxY = Math.max(maxY, pos.y + pos.height);
+            });
+
+            return { minX, maxX, maxY, totalWidth: maxX - minX };
+        }
+
+        function renderChart() {
+            if (!treeData) return;
+
+            const layout = calculateLayout();
+            const svg = document.getElementById('canvas');
+            const padding = 50;
+
+            const svgWidth = layout.totalWidth + padding * 2;
+            const svgHeight = layout.maxY + padding * 2 + 40;
+            svg.setAttribute('width', svgWidth);
+            svg.setAttribute('height', svgHeight);
+            svg.setAttribute('viewBox', `${layout.minX - padding} -${padding} ${svgWidth} ${svgHeight}`);
+
+            svg.innerHTML = '';
+
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('id', 'mainGroup');
+            svg.appendChild(g);
+
+            // 先绘制连接线
+            allNodes.forEach(node => {
+                if (node.parentId && !collapsedNodes.has(node.parentId)) {
+                    drawEdge(g, node);
+                }
+            });
+
+            // 再绘制节点
+            allNodes.forEach(node => {
+                const parentCollapsed = node.parentId && collapsedNodes.has(node.parentId);
+                if (!parentCollapsed) {
+                    drawNode(g, node);
+                }
+            });
+
+            document.getElementById('hint').style.display = 'none';
+            document.getElementById('canvasWrapper').style.display = 'flex';
+            document.getElementById('zoomControls').style.display = 'flex';
+
+            applyView();
+        }
+
+        function drawNode(parent, node) {
+            const config = levelConfig[node.level] || levelConfig[0];
+            const pos = nodePositions[node.id];
+            if (!pos) return;
+
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'node');
+            g.setAttribute('data-node-id', node.id);
+
+            // 绘制形状
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('class', 'node-shape hoverable');
+            rect.setAttribute('x', pos.x);
+            rect.setAttribute('y', pos.y);
+            rect.setAttribute('width', config.width);
+            rect.setAttribute('height', config.height);
+            rect.setAttribute('rx', '4');
+            rect.setAttribute('fill', NODE_COLOR.fill);
+            rect.setAttribute('stroke', NODE_COLOR.stroke);
+            rect.setAttribute('stroke-width', '2');
+            
+            // 选中状态
+            if (selectedNodeId === node.id) {
+                rect.classList.add('selected');
+            }
+            g.appendChild(rect);
+
+            // 绘制文字
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('fill', NODE_COLOR.text);
+            text.setAttribute('font-size', config.fontSize);
+            text.setAttribute('font-weight', 'bold');
+            text.setAttribute('font-family', 'Microsoft YaHei UI, SimHei, sans-serif');
+            text.style.pointerEvents = 'none';
+
+            if (config.direction === 'vertical') {
+                const chars = node.name.split('');
+                text.setAttribute('x', pos.x + config.width / 2);
+                text.setAttribute('y', pos.y + config.height / 2 - (chars.length - 1) * config.fontSize * 0.5);
+                text.setAttribute('text-anchor', 'middle');
+                chars.forEach((char, i) => {
+                    const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                    tspan.setAttribute('x', pos.x + config.width / 2);
+                    tspan.setAttribute('dy', i === 0 ? 0 : config.fontSize * 1.2);
+                    tspan.textContent = char;
+                    text.appendChild(tspan);
+                });
+            } else {
+                text.setAttribute('x', pos.x + config.width / 2);
+                text.setAttribute('y', pos.y + config.height / 2);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'middle');
+                text.textContent = node.name;
+            }
+            g.appendChild(text);
+
+            // 节点点击事件（选中/取消选中）
+            rect.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (selectedNodeId === node.id) {
+                    selectedNodeId = null;
+                } else {
+                    selectedNodeId = node.id;
+                }
+                updateNodeSelection();
+            });
+
+            // 节点拖拽
+            rect.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                isDraggingNode = true;
+                selectedNodeId = node.id;
+                nodeStartX = nodeOffsets[node.id] || 0;
+                nodeStartMouseX = e.clientX;
+                document.getElementById('canvasWrapper').classList.add('node-selected');
+                updateNodeSelection();
+            });
+
+            // 折叠按钮
+            if (node.children.length > 0) {
+                const btnG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                btnG.setAttribute('class', 'collapse-btn');
+                btnG.style.cursor = 'pointer';
+                
+                const btnX = pos.x + config.width / 2;
+                const btnY = pos.y + config.height + 8;
+                const btnR = 7;
+
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', btnX);
+                circle.setAttribute('cy', btnY);
+                circle.setAttribute('r', btnR);
+                circle.setAttribute('fill', 'white');
+                circle.setAttribute('stroke', NODE_COLOR.stroke);
+                circle.setAttribute('stroke-width', '1.5');
+                btnG.appendChild(circle);
+
+                const text2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text2.setAttribute('x', btnX);
+                text2.setAttribute('y', btnY);
+                text2.setAttribute('text-anchor', 'middle');
+                text2.setAttribute('dominant-baseline', 'middle');
+                text2.setAttribute('font-size', '11');
+                text2.setAttribute('font-weight', 'bold');
+                text2.setAttribute('fill', NODE_COLOR.stroke);
+                text2.textContent = collapsedNodes.has(node.id) ? '+' : '−';
+                btnG.appendChild(text2);
+
+                btnG.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleNode(node.id);
+                });
+
+                g.appendChild(btnG);
+            }
+
+            parent.appendChild(g);
+        }
+
+        function updateNodeSelection() {
+            document.querySelectorAll('.node-shape').forEach(rect => {
+                const nodeId = rect.parentElement.getAttribute('data-node-id');
+                if (nodeId === selectedNodeId) {
+                    rect.classList.add('selected');
+                } else {
+                    rect.classList.remove('selected');
+                }
+            });
+        }
+
+        function drawEdge(parent, node) {
+            const config = levelConfig[node.level] || levelConfig[0];
+            const parentConfig = levelConfig[node.level - 1] || levelConfig[0];
+            const pos = nodePositions[node.id];
+            const parentPos = nodePositions[node.parentId];
+            if (!pos || !parentPos) return;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+            const startX = parentPos.x + parentConfig.width / 2;
+            const startY = parentPos.y + parentConfig.height;
+            const endX = pos.x + config.width / 2;
+            const endY = pos.y;
+            
+            const midY = startY + (endY - startY) / 2;
+            const d = `M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`;
+            
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', NODE_COLOR.stroke);
+            path.setAttribute('stroke-width', '1.5');
+            
+            parent.appendChild(path);
+        }
+
+        function toggleNode(nodeId) {
+            if (collapsedNodes.has(nodeId)) {
+                collapsedNodes.delete(nodeId);
+            } else {
+                collapsedNodes.add(nodeId);
+            }
+            renderChart();
+        }
+
+        // 重置布局
+        function resetLayout() {
+            nodeOffsets = {};
+            selectedNodeId = null;
+            renderChart();
+        }
+
+        // 画布拖拽
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        
+        canvasWrapper.addEventListener('mousedown', (e) => {
+            if (!treeData || isDraggingNode) return;
+            isDraggingCanvas = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            canvasWrapper.classList.add('dragging');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDraggingNode && selectedNodeId) {
+                // 节点横向拖拽
+                const deltaX = e.clientX - nodeStartMouseX;
+                nodeOffsets[selectedNodeId] = nodeStartX + deltaX / currentZoom;
+                renderChart();
+            } else if (isDraggingCanvas) {
+                // 画布拖拽
+                const deltaX = e.clientX - lastMouseX;
+                const deltaY = e.clientY - lastMouseY;
+                panX += deltaX;
+                panY += deltaY;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                applyView();
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDraggingCanvas = false;
+            isDraggingNode = false;
+            canvasWrapper.classList.remove('dragging');
+            canvasWrapper.classList.remove('node-selected');
+        });
+
+        // 点击空白处取消选中
+        canvasWrapper.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('canvas') || e.target.tagName === 'svg') {
+                selectedNodeId = null;
+                updateNodeSelection();
+            }
+        });
+
+        // 滚轮缩放
+        document.getElementById('canvasContainer').addEventListener('wheel', (e) => {
+            if (!treeData) return;
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            currentZoom = Math.max(0.3, Math.min(2, currentZoom * delta));
+            applyView();
+        });
+
+        function zoomIn() {
+            currentZoom = Math.min(currentZoom * 1.2, 2);
+            applyView();
+        }
+
+        function zoomOut() {
+            currentZoom = Math.max(currentZoom / 1.2, 0.3);
+            applyView();
+        }
+
+        function resetView() {
+            currentZoom = 1;
+            panX = 0;
+            panY = 0;
+            applyView();
+        }
+
+        function applyView() {
+            const svg = document.getElementById('canvas');
+            svg.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+            svg.style.transformOrigin = 'center top';
+            document.getElementById('zoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+        }
+
+        // 全屏功能
+        function toggleFullscreen() {
+            isFullscreen = !isFullscreen;
+            document.body.classList.toggle('fullscreen-mode', isFullscreen);
+        }
+
+        // ESC 退出全屏
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isFullscreen) {
+                toggleFullscreen();
+            }
+        });
+
+        // 导出PNG
+        function exportPNG() {
+            const svg = document.getElementById('canvas');
+            
+            // 保存当前transform状态
+            const savedTransform = svg.style.transform;
+            svg.style.transform = 'none';
+            
+            // 克隆并清理
+            const clone = svg.cloneNode(true);
+            clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            clone.querySelectorAll('.node-shape').forEach(rect => rect.classList.remove('selected', 'hoverable'));
+            
+            // 使用viewBox确保完整导出
+            const viewBox = svg.getAttribute('viewBox');
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            
+            // 移除可能影响导出的样式
+            clone.style.transform = 'none';
+            clone.style.transformOrigin = '';
+            
+            const svgData = new XMLSerializer().serializeToString(clone);
+            
+            // 恢复transform
+            svg.style.transform = savedTransform;
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = width * 2;
+                canvas.height = height * 2;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                
+                const link = document.createElement('a');
+                link.download = '组织架构图.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            };
+            
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            img.src = URL.createObjectURL(svgBlob);
+        }
+
+        // 导出PDF
+        function exportPDF() {
+            const { jsPDF } = window.jspdf;
+            const svg = document.getElementById('canvas');
+            
+            // 保存当前transform状态
+            const savedTransform = svg.style.transform;
+            svg.style.transform = 'none';
+            
+            // 克隆并清理
+            const clone = svg.cloneNode(true);
+            clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            clone.querySelectorAll('.node-shape').forEach(rect => rect.classList.remove('selected', 'hoverable'));
+            
+            // 使用viewBox确保完整导出
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            
+            // 移除可能影响导出的样式
+            clone.style.transform = 'none';
+            clone.style.transformOrigin = '';
+            
+            const svgData = new XMLSerializer().serializeToString(clone);
+            
+            // 恢复transform
+            svg.style.transform = savedTransform;
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = width * 2;
+                canvas.height = height * 2;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                
+                const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+                pdf.save('组织架构图.pdf');
+            };
+            
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            img.src = URL.createObjectURL(svgBlob);
+        }
+    </script>
+</body>
+</html>
