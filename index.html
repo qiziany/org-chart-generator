@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>组织架构图生成器</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Microsoft YaHei UI", "SimHei", sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar {
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            padding: 10px 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .toolbar h1 {
+            font-size: 18px;
+            color: #333;
+            margin-right: 30px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #1976D2; color: white; }
+        .btn-primary:hover { background: #1565C0; }
+        .btn-success { background: #388E3C; color: white; }
+        .btn-success:hover { background: #2E7D32; }
+        .btn-warning { background: #F57C00; color: white; }
+        .btn-warning:hover { background: #EF6C00; }
+        .btn-secondary { background: #757575; color: white; }
+        .btn-secondary:hover { background: #616161; }
+        .btn-info { background: #0097A7; color: white; }
+        .btn-info:hover { background: #00838F; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        #fileInput { display: none; }
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .canvas-container {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            background: #fafafa;
+        }
+        #canvasWrapper {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+            cursor: grab;
+        }
+        #canvasWrapper.dragging {
+            cursor: grabbing;
+        }
+        #canvas {
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.05s ease-out;
+        }
+        .config-panel {
+            width: 300px;
+            background: white;
+            border-left: 1px solid #ddd;
+            padding: 15px;
+            overflow-y: auto;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+        .config-panel.hidden {
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        .config-section {
+            margin-bottom: 20px;
+        }
+        .config-section h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #1976D2;
+        }
+        .level-item {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .level-item h4 {
+            font-size: 13px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .level-item label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        .level-item input[type="number"] {
+            width: 55px;
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .level-item select {
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        .hint {
+            text-align: center;
+            color: #999;
+            font-size: 16px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 5px;
+            z-index: 100;
+            background: white;
+            padding: 5px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+        }
+        .zoom-btn:hover { background: #f0f0f0; }
+        .zoom-level {
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+            color: #666;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-width: 60px;
+            justify-content: center;
+        }
+        .global-config {
+            background: #e8f4fc;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .global-config label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #333;
+        }
+        .global-config input[type="number"] {
+            width: 60px;
+            margin-left: 10px;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        /* 全屏模式样式 */
+        body.fullscreen-mode .toolbar {
+            display: none;
+        }
+        body.fullscreen-mode .config-panel {
+            display: none;
+        }
+        body.fullscreen-mode .canvas-container {
+            height: 100vh;
+        }
+        .exit-fullscreen-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: none;
+        }
+        body.fullscreen-mode .exit-fullscreen-btn {
+            display: block;
+        }
+        .exit-fullscreen-btn:hover {
+            background: rgba(0,0,0,0.85);
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <h1>组织架构图生成器</h1>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">📁 打开文件</button>
+        <button class="btn btn-success" id="exportPngBtn" onclick="exportPNG()" disabled>📷 导出PNG</button>
+        <button class="btn btn-warning" id="exportPdfBtn" onclick="exportPDF()" disabled>📄 导出PDF</button>
+        <button class="btn btn-info" id="fullscreenBtn" onclick="toggleFullscreen()" disabled>⛶ 全屏展示</button>
+        <button class="btn btn-secondary" onclick="resetView()">重置视图</button>
+    </div>
+
+    <div class="main-content">
+        <div class="canvas-container" id="canvasContainer">
+            <div class="hint" id="hint">
+                请点击「打开文件」导入 Excel 或 CSV 文件<br><br>
+                支持格式：.xlsx .xls .csv
+            </div>
+            <div id="canvasWrapper" style="display:none;">
+                <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+            </div>
+            <button class="exit-fullscreen-btn" onclick="toggleFullscreen()">退出全屏 (ESC)</button>
+            <div class="zoom-controls" id="zoomControls" style="display:none;">
+                <button class="zoom-btn" onclick="zoomOut()">−</button>
+                <div class="zoom-level" id="zoomLevel">100%</div>
+                <button class="zoom-btn" onclick="zoomIn()">+</button>
+            </div>
+        </div>
+
+        <div class="config-panel" id="configPanel">
+            <div class="config-section">
+                <h3>全局间距设置</h3>
+                <div class="global-config">
+                    <label>同层级横向间距: <input type="number" id="globalHSpacing" value="15" min="5" max="100" onchange="onConfigChange()">px</label>
+                    <label>层级纵向间距: <input type="number" id="globalVSpacing" value="80" min="30" max="200" onchange="onConfigChange()">px</label>
+                </div>
+            </div>
+            <div class="config-section">
+                <h3>层级配置</h3>
+                <div id="levelConfigs"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局状态
+        let treeData = null;
+        let allNodes = [];
+        let nodePositions = {};
+        let collapsedNodes = new Set();
+        let maxLevel = 0;
+        let currentZoom = 1;
+        let panX = 0;
+        let panY = 0;
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let isFullscreen = false;
+
+        // 样式配置 - 统一黑白配色
+        const NODE_COLOR = { fill: 'white', stroke: '#333333', text: '#333333' };
+
+        let levelConfig = {};
+        let levelSpacing = {};
+        let globalHSpacing = 15;
+
+        // 文件输入处理
+        document.getElementById('fileInput').addEventListener('change', handleFile);
+
+        function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    let data;
+                    if (file.name.endsWith('.csv')) {
+                        data = parseCSV(e.target.result);
+                    } else {
+                        data = parseExcel(e.target.result);
+                    }
+                    buildTree(data);
+                    initializeConfig();
+                    renderChart();
+                    document.getElementById('exportPngBtn').disabled = false;
+                    document.getElementById('exportPdfBtn').disabled = false;
+                    document.getElementById('fullscreenBtn').disabled = false;
+                } catch (error) {
+                    alert('解析文件失败：' + error.message);
+                }
+            };
+            
+            if (file.name.endsWith('.csv')) {
+                reader.readAsText(file, 'UTF-8');
+            } else {
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function parseCSV(text) {
+            const lines = text.split('\n').filter(line => line.trim());
+            const headers = lines[0].split(',').map(h => h.trim());
+            
+            const nameIdx = headers.findIndex(h => h.includes('部门名称') || h.includes('名称') || h.toLowerCase().includes('name'));
+            const parentIdx = headers.findIndex(h => h.includes('上级部门') || h.includes('上级') || h.toLowerCase().includes('parent'));
+            const typeIdx = headers.findIndex(h => h.includes('部门类型') || h.includes('类型') || h.toLowerCase().includes('type'));
+
+            if (nameIdx === -1 || parentIdx === -1) {
+                throw new Error('未找到必需的列：部门名称、上级部门');
+            }
+
+            const result = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim());
+                if (values.length > Math.max(nameIdx, parentIdx)) {
+                    result.push({
+                        name: values[nameIdx],
+                        parent: values[parentIdx] || ''
+                    });
+                }
+            }
+            return result;
+        }
+
+        function parseExcel(buffer) {
+            const workbook = XLSX.read(buffer, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet);
+            
+            const firstRow = data[0] || {};
+            const keys = Object.keys(firstRow);
+            
+            const nameKey = keys.find(k => k.includes('部门名称') || k.includes('名称') || k.toLowerCase().includes('name'));
+            const parentKey = keys.find(k => k.includes('上级部门') || k.includes('上级') || k.toLowerCase().includes('parent'));
+
+            if (!nameKey || !parentKey) {
+                throw new Error('未找到必需的列：部门名称、上级部门');
+            }
+
+            return data.map(row => ({
+                name: row[nameKey] || '',
+                parent: row[parentKey] || ''
+            }));
+        }
+
+        function buildTree(data) {
+            const nodeMap = {};
+            data.forEach(item => {
+                nodeMap[item.name] = {
+                    id: item.name,
+                    name: item.name,
+                    parent: item.parent,
+                    children: [],
+                    level: 0
+                };
+            });
+
+            const roots = [];
+            data.forEach(item => {
+                const node = nodeMap[item.name];
+                if (item.parent && nodeMap[item.parent]) {
+                    nodeMap[item.parent].children.push(node);
+                } else {
+                    roots.push(node);
+                }
+            });
+
+            function setLevel(node, level) {
+                node.level = level;
+                maxLevel = Math.max(maxLevel, level);
+                node.children.forEach(child => setLevel(child, level + 1));
+            }
+            roots.forEach(root => setLevel(root, 0));
+
+            treeData = { roots, nodeMap };
+            allNodes = Object.values(nodeMap);
+        }
+
+        // 计算文字宽度
+        function getTextWidth(text, fontSize) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `bold ${fontSize}px "Microsoft YaHei UI", "SimHei", sans-serif`;
+            return ctx.measureText(text).width;
+        }
+
+        // 计算同层级最大形状尺寸
+        function calculateLevelSizes() {
+            const levelNodes = {};
+            allNodes.forEach(node => {
+                if (!levelNodes[node.level]) levelNodes[node.level] = [];
+                levelNodes[node.level].push(node);
+            });
+
+            Object.keys(levelNodes).forEach(level => {
+                const nodes = levelNodes[level];
+                const config = levelConfig[level];
+                if (!config) return;
+
+                let maxWidth = config.width;
+                let maxHeight = config.height;
+
+                nodes.forEach(node => {
+                    if (config.direction === 'horizontal') {
+                        const textWidth = getTextWidth(node.name, config.fontSize);
+                        const neededWidth = textWidth + 20;
+                        maxWidth = Math.max(maxWidth, Math.ceil(neededWidth));
+                    } else {
+                        const charCount = node.name.length;
+                        const neededHeight = charCount * config.fontSize * 1.2 + 20;
+                        maxHeight = Math.max(maxHeight, Math.ceil(neededHeight));
+                    }
+                });
+
+                config.width = maxWidth;
+                config.height = maxHeight;
+            });
+        }
+
+        function initializeConfig() {
+            levelConfig = {};
+            levelSpacing = {};
+            
+            for (let i = 0; i <= maxLevel; i++) {
+                if (i === 0) {
+                    levelConfig[i] = { width: 140, height: 50, fontSize: 14, direction: 'horizontal' };
+                } else if (i === 1) {
+                    levelConfig[i] = { width: 120, height: 45, fontSize: 13, direction: 'horizontal' };
+                } else {
+                    levelConfig[i] = { width: 50, height: 100, fontSize: 11, direction: 'vertical' };
+                }
+                levelSpacing[i] = 80;
+            }
+
+            calculateLevelSizes();
+            updateConfigPanel();
+            
+            panX = 0;
+            panY = 0;
+            currentZoom = 1;
+        }
+
+        function updateConfigPanel() {
+            const levelConfigsHtml = Object.entries(levelConfig).map(([level, config]) => `
+                <div class="level-item">
+                    <h4>第${parseInt(level)+1}层</h4>
+                    <label>宽度: <input type="number" id="width_${level}" value="${config.width}" min="30" onchange="onLevelSizeChange()"></label>
+                    <label>高度: <input type="number" id="height_${level}" value="${config.height}" min="30" onchange="onLevelSizeChange()"></label>
+                    <label>字号: <input type="number" id="fontSize_${level}" value="${config.fontSize}" min="8" onchange="onConfigChange()"></label>
+                    <label>方向: 
+                        <select id="direction_${level}" onchange="onConfigChange()">
+                            <option value="horizontal" ${config.direction === 'horizontal' ? 'selected' : ''}>横向</option>
+                            <option value="vertical" ${config.direction === 'vertical' ? 'selected' : ''}>竖向</option>
+                        </select>
+                    </label>
+                </div>
+            `).join('');
+            document.getElementById('levelConfigs').innerHTML = levelConfigsHtml;
+        }
+
+        function onLevelSizeChange() {
+            Object.keys(levelConfig).forEach(level => {
+                levelConfig[level].width = parseInt(document.getElementById(`width_${level}`)?.value) || 120;
+                levelConfig[level].height = parseInt(document.getElementById(`height_${level}`)?.value) || 50;
+            });
+            calculateLevelSizes();
+            updateConfigPanel();
+            renderChart();
+        }
+
+        function onConfigChange() {
+            globalHSpacing = parseInt(document.getElementById('globalHSpacing')?.value) || 15;
+            const globalVSpacing = parseInt(document.getElementById('globalVSpacing')?.value) || 80;
+            
+            Object.keys(levelSpacing).forEach(level => {
+                levelSpacing[level] = globalVSpacing;
+            });
+
+            Object.keys(levelConfig).forEach(level => {
+                levelConfig[level].fontSize = parseInt(document.getElementById(`fontSize_${level}`)?.value) || 13;
+                levelConfig[level].direction = document.getElementById(`direction_${level}`)?.value || 'horizontal';
+            });
+
+            renderChart();
+        }
+
+        function calculateLayout() {
+            nodePositions = {};
+            
+            function getSubtreeWidth(node) {
+                const config = levelConfig[node.level] || levelConfig[0];
+                if (node.children.length === 0 || collapsedNodes.has(node.id)) {
+                    return config.width;
+                }
+                const childrenWidth = node.children.reduce((sum, child) => {
+                    return sum + getSubtreeWidth(child) + globalHSpacing;
+                }, -globalHSpacing);
+                return Math.max(config.width, childrenWidth);
+            }
+
+            function layoutNode(node, leftBound, y) {
+                const config = levelConfig[node.level] || levelConfig[0];
+                const subtreeWidth = getSubtreeWidth(node);
+                const x = leftBound + (subtreeWidth - config.width) / 2;
+                
+                nodePositions[node.id] = { x, y, width: config.width, height: config.height };
+
+                if (node.children.length > 0 && !collapsedNodes.has(node.id)) {
+                    const spacing = levelSpacing[node.level] || 80;
+                    const childY = y + config.height + spacing;
+                    
+                    let totalChildWidth = node.children.reduce((sum, child) => {
+                        return sum + getSubtreeWidth(child) + globalHSpacing;
+                    }, -globalHSpacing);
+                    
+                    let childLeft = leftBound + (subtreeWidth - totalChildWidth) / 2;
+                    
+                    node.children.forEach(child => {
+                        const childWidth = getSubtreeWidth(child);
+                        layoutNode(child, childLeft, childY);
+                        childLeft += childWidth + globalHSpacing;
+                    });
+                }
+            }
+
+            let totalWidth = 0;
+            treeData.roots.forEach(root => {
+                totalWidth += getSubtreeWidth(root) + globalHSpacing;
+            });
+            totalWidth -= globalHSpacing;
+
+            let currentX = 0;
+            treeData.roots.forEach(root => {
+                const width = getSubtreeWidth(root);
+                layoutNode(root, currentX, 0);
+                currentX += width + globalHSpacing;
+            });
+
+            let minX = Infinity, maxX = -Infinity, maxY = 0;
+            Object.values(nodePositions).forEach(pos => {
+                minX = Math.min(minX, pos.x);
+                maxX = Math.max(maxX, pos.x + pos.width);
+                maxY = Math.max(maxY, pos.y + pos.height);
+            });
+
+            return { minX, maxX, maxY, totalWidth: maxX - minX };
+        }
+
+        function renderChart() {
+            if (!treeData) return;
+
+            const layout = calculateLayout();
+            const svg = document.getElementById('canvas');
+            const padding = 50;
+
+            const svgWidth = layout.totalWidth + padding * 2;
+            const svgHeight = layout.maxY + padding * 2 + 40;
+            svg.setAttribute('width', svgWidth);
+            svg.setAttribute('height', svgHeight);
+            svg.setAttribute('viewBox', `${layout.minX - padding} -${padding} ${svgWidth} ${svgHeight}`);
+
+            svg.innerHTML = '';
+
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('id', 'mainGroup');
+            svg.appendChild(g);
+
+            allNodes.forEach(node => {
+                if (node.parent && !collapsedNodes.has(node.parent)) {
+                    drawEdge(g, node);
+                }
+            });
+
+            allNodes.forEach(node => {
+                const parentCollapsed = node.parent && collapsedNodes.has(node.parent);
+                if (!parentCollapsed) {
+                    drawNode(g, node);
+                }
+            });
+
+            document.getElementById('hint').style.display = 'none';
+            document.getElementById('canvasWrapper').style.display = 'flex';
+            document.getElementById('zoomControls').style.display = 'flex';
+
+            applyView();
+        }
+
+        function drawNode(parent, node) {
+            const config = levelConfig[node.level] || levelConfig[0];
+            const pos = nodePositions[node.id];
+            if (!pos) return;
+
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'node');
+
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', pos.x);
+            rect.setAttribute('y', pos.y);
+            rect.setAttribute('width', config.width);
+            rect.setAttribute('height', config.height);
+            rect.setAttribute('rx', '4');
+            rect.setAttribute('fill', NODE_COLOR.fill);
+            rect.setAttribute('stroke', NODE_COLOR.stroke);
+            rect.setAttribute('stroke-width', '2');
+            g.appendChild(rect);
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('fill', NODE_COLOR.text);
+            text.setAttribute('font-size', config.fontSize);
+            text.setAttribute('font-weight', 'bold');
+            text.setAttribute('font-family', 'Microsoft YaHei UI, SimHei, sans-serif');
+
+            if (config.direction === 'vertical') {
+                const chars = node.name.split('');
+                text.setAttribute('x', pos.x + config.width / 2);
+                text.setAttribute('y', pos.y + config.height / 2 - (chars.length - 1) * config.fontSize * 0.5);
+                text.setAttribute('text-anchor', 'middle');
+                chars.forEach((char, i) => {
+                    const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                    tspan.setAttribute('x', pos.x + config.width / 2);
+                    tspan.setAttribute('dy', i === 0 ? 0 : config.fontSize * 1.2);
+                    tspan.textContent = char;
+                    text.appendChild(tspan);
+                });
+            } else {
+                text.setAttribute('x', pos.x + config.width / 2);
+                text.setAttribute('y', pos.y + config.height / 2);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'middle');
+                text.textContent = node.name;
+            }
+            g.appendChild(text);
+
+            if (node.children.length > 0) {
+                const btnG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                btnG.setAttribute('class', 'collapse-btn');
+                btnG.style.cursor = 'pointer';
+                
+                const btnX = pos.x + config.width / 2;
+                const btnY = pos.y + config.height + 8;
+                const btnR = 7;
+
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', btnX);
+                circle.setAttribute('cy', btnY);
+                circle.setAttribute('r', btnR);
+                circle.setAttribute('fill', 'white');
+                circle.setAttribute('stroke', NODE_COLOR.stroke);
+                circle.setAttribute('stroke-width', '1.5');
+                btnG.appendChild(circle);
+
+                const text2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text2.setAttribute('x', btnX);
+                text2.setAttribute('y', btnY);
+                text2.setAttribute('text-anchor', 'middle');
+                text2.setAttribute('dominant-baseline', 'middle');
+                text2.setAttribute('font-size', '11');
+                text2.setAttribute('font-weight', 'bold');
+                text2.setAttribute('fill', NODE_COLOR.stroke);
+                text2.textContent = collapsedNodes.has(node.id) ? '+' : '−';
+                btnG.appendChild(text2);
+
+                btnG.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleNode(node.id);
+                });
+
+                g.appendChild(btnG);
+            }
+
+            parent.appendChild(g);
+        }
+
+        function drawEdge(parent, node) {
+            const config = levelConfig[node.level] || levelConfig[0];
+            const parentConfig = levelConfig[node.level - 1] || levelConfig[0];
+            const pos = nodePositions[node.id];
+            const parentPos = nodePositions[node.parent];
+            if (!pos || !parentPos) return;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+            const startX = parentPos.x + parentConfig.width / 2;
+            const startY = parentPos.y + parentConfig.height;
+            const endX = pos.x + config.width / 2;
+            const endY = pos.y;
+            
+            const midY = startY + (endY - startY) / 2;
+            const d = `M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`;
+            
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', NODE_COLOR.stroke);
+            path.setAttribute('stroke-width', '1.5');
+            
+            parent.appendChild(path);
+        }
+
+        function toggleNode(nodeId) {
+            if (collapsedNodes.has(nodeId)) {
+                collapsedNodes.delete(nodeId);
+            } else {
+                collapsedNodes.add(nodeId);
+            }
+            renderChart();
+        }
+
+        // 拖拽功能
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        
+        canvasWrapper.addEventListener('mousedown', (e) => {
+            if (!treeData) return;
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            canvasWrapper.classList.add('dragging');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const deltaX = e.clientX - lastMouseX;
+            const deltaY = e.clientY - lastMouseY;
+            panX += deltaX;
+            panY += deltaY;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            applyView();
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvasWrapper.classList.remove('dragging');
+        });
+
+        // 滚轮缩放
+        document.getElementById('canvasContainer').addEventListener('wheel', (e) => {
+            if (!treeData) return;
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            currentZoom = Math.max(0.3, Math.min(2, currentZoom * delta));
+            applyView();
+        });
+
+        function zoomIn() {
+            currentZoom = Math.min(currentZoom * 1.2, 2);
+            applyView();
+        }
+
+        function zoomOut() {
+            currentZoom = Math.max(currentZoom / 1.2, 0.3);
+            applyView();
+        }
+
+        function resetView() {
+            currentZoom = 1;
+            panX = 0;
+            panY = 0;
+            applyView();
+        }
+
+        function applyView() {
+            const svg = document.getElementById('canvas');
+            svg.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+            svg.style.transformOrigin = 'center top';
+            document.getElementById('zoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+        }
+
+        // 全屏功能
+        function toggleFullscreen() {
+            isFullscreen = !isFullscreen;
+            document.body.classList.toggle('fullscreen-mode', isFullscreen);
+        }
+
+        // ESC 退出全屏
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isFullscreen) {
+                toggleFullscreen();
+            }
+        });
+
+        // 导出PNG
+        function exportPNG() {
+            const svg = document.getElementById('canvas');
+            
+            const clone = svg.cloneNode(true);
+            clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            
+            const svgData = new XMLSerializer().serializeToString(clone);
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = img.width * 2;
+                canvas.height = img.height * 2;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                
+                const link = document.createElement('a');
+                link.download = '组织架构图.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            };
+            
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            img.src = URL.createObjectURL(svgBlob);
+        }
+
+        // 导出PDF
+        function exportPDF() {
+            const { jsPDF } = window.jspdf;
+            const svg = document.getElementById('canvas');
+            
+            const clone = svg.cloneNode(true);
+            clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            
+            const svgData = new XMLSerializer().serializeToString(clone);
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = img.width * 2;
+                canvas.height = img.height * 2;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                
+                const pdf = new jsPDF({
+                    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+                    unit: 'px',
+                    format: [canvas.width, canvas.height]
+                });
+                
+                pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+                pdf.save('组织架构图.pdf');
+            };
+            
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            img.src = URL.createObjectURL(svgBlob);
+        }
+    </script>
+</body>
+</html>
