@@ -27,6 +27,7 @@
             gap: 15px;
             align-items: center;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            flex-wrap: wrap;
         }
         .toolbar h1 {
             font-size: 18px;
@@ -76,6 +77,9 @@
         }
         #canvasWrapper.dragging {
             cursor: grabbing;
+        }
+        #canvasWrapper.node-selected {
+            cursor: ew-resize;
         }
         #canvas {
             background: white;
@@ -199,6 +203,26 @@
             border: 1px solid #ddd;
             border-radius: 3px;
         }
+        /* 操作技巧 */
+        .tips-box {
+            background: #fff3e0;
+            border: 1px solid #ffcc80;
+            border-radius: 4px;
+            padding: 10px 12px;
+            margin-bottom: 15px;
+        }
+        .tips-box h4 {
+            font-size: 13px;
+            color: #e65100;
+            margin-bottom: 8px;
+        }
+        .tips-box ul {
+            margin: 0;
+            padding-left: 18px;
+            font-size: 12px;
+            color: #666;
+            line-height: 1.8;
+        }
         /* 全屏模式样式 */
         body.fullscreen-mode .toolbar {
             display: none;
@@ -229,6 +253,23 @@
         .exit-fullscreen-btn:hover {
             background: rgba(0,0,0,0.85);
         }
+        /* 节点选中样式 */
+        .node-shape {
+            transition: stroke-width 0.2s, stroke 0.2s;
+        }
+        .node-shape.selected {
+            stroke-width: 3;
+            stroke: #1976D2 !important;
+        }
+        .node-shape.hoverable:hover {
+            stroke-width: 2.5;
+            cursor: ew-resize;
+        }
+        /* 间距标签高亮 */
+        .spacing-label {
+            color: #1976D2;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -240,6 +281,7 @@
         <button class="btn btn-warning" id="exportPdfBtn" onclick="exportPDF()" disabled>📄 导出PDF</button>
         <button class="btn btn-info" id="fullscreenBtn" onclick="toggleFullscreen()" disabled>⛶ 全屏展示</button>
         <button class="btn btn-secondary" onclick="resetView()">重置视图</button>
+        <button class="btn btn-secondary" id="resetLayoutBtn" onclick="resetLayout()" style="display:none;">重置布局</button>
     </div>
 
     <div class="main-content">
@@ -260,10 +302,18 @@
         </div>
 
         <div class="config-panel" id="configPanel">
+            <div class="tips-box">
+                <h4>💡 操作技巧</h4>
+                <ul>
+                    <li>点击节点可横向拖动调整位置</li>
+                    <li>点击 <b>−</b> 隐藏下级部门，点击 <b>+</b> 展开</li>
+                    <li>鼠标滚轮缩放，拖拽空白处平移</li>
+                </ul>
+            </div>
+            
             <div class="config-section">
-                <h3>全局间距设置</h3>
+                <h3>全局纵向间距</h3>
                 <div class="global-config">
-                    <label>同层级横向间距: <input type="number" id="globalHSpacing" value="15" min="5" max="100" onchange="onConfigChange()">px</label>
                     <label>层级纵向间距: <input type="number" id="globalVSpacing" value="80" min="30" max="200" onchange="onConfigChange()">px</label>
                 </div>
             </div>
@@ -284,17 +334,24 @@
         let currentZoom = 1;
         let panX = 0;
         let panY = 0;
-        let isDragging = false;
+        let isDraggingCanvas = false;
         let lastMouseX = 0;
         let lastMouseY = 0;
         let isFullscreen = false;
+
+        // 节点拖拽状态
+        let selectedNodeId = null;
+        let isDraggingNode = false;
+        let nodeStartX = 0;
+        let nodeStartMouseX = 0;
 
         // 样式配置 - 统一黑白配色
         const NODE_COLOR = { fill: 'white', stroke: '#333333', text: '#333333' };
 
         let levelConfig = {};
         let levelSpacing = {};
-        let globalHSpacing = 15;
+        let levelHSpacing = {}; // 每个层级的横向间距
+        let nodeOffsets = {}; // 节点的横向偏移量（用于拖拽）
 
         // 文件输入处理
         document.getElementById('fileInput').addEventListener('change', handleFile);
@@ -318,6 +375,7 @@
                     document.getElementById('exportPngBtn').disabled = false;
                     document.getElementById('exportPdfBtn').disabled = false;
                     document.getElementById('fullscreenBtn').disabled = false;
+                    document.getElementById('resetLayoutBtn').style.display = 'inline-block';
                 } catch (error) {
                     alert('解析文件失败：' + error.message);
                 }
@@ -336,7 +394,6 @@
             
             const nameIdx = headers.findIndex(h => h.includes('部门名称') || h.includes('名称') || h.toLowerCase().includes('name'));
             const parentIdx = headers.findIndex(h => h.includes('上级部门') || h.includes('上级') || h.toLowerCase().includes('parent'));
-            const typeIdx = headers.findIndex(h => h.includes('部门类型') || h.includes('类型') || h.toLowerCase().includes('type'));
 
             if (nameIdx === -1 || parentIdx === -1) {
                 throw new Error('未找到必需的列：部门名称、上级部门');
@@ -347,8 +404,9 @@
                 const values = lines[i].split(',').map(v => v.trim());
                 if (values.length > Math.max(nameIdx, parentIdx)) {
                     result.push({
+                        id: `row_${i}`, // 使用行号作为唯一ID
                         name: values[nameIdx],
-                        parent: values[parentIdx] || ''
+                        parentName: values[parentIdx] || '' // 保存上级部门名称
                     });
                 }
             }
@@ -370,34 +428,69 @@
                 throw new Error('未找到必需的列：部门名称、上级部门');
             }
 
-            return data.map(row => ({
+            return data.map((row, index) => ({
+                id: `row_${index}`, // 使用行号作为唯一ID
                 name: row[nameKey] || '',
-                parent: row[parentKey] || ''
+                parentName: row[parentKey] || '' // 保存上级部门名称
             }));
         }
 
         function buildTree(data) {
-            const nodeMap = {};
-            data.forEach(item => {
-                nodeMap[item.name] = {
-                    id: item.name,
+            const nodeMap = {}; // id -> node
+            
+            // 第一遍：创建所有节点
+            data.forEach((item, index) => {
+                nodeMap[item.id] = {
+                    id: item.id,
                     name: item.name,
-                    parent: item.parent,
+                    parentName: item.parentName,
+                    parentId: null,
                     children: [],
                     level: 0
                 };
             });
 
-            const roots = [];
+            // 建立名称到节点ID列表的映射（同名部门可能有多个）
+            const nameToNodes = {};
             data.forEach(item => {
-                const node = nodeMap[item.name];
-                if (item.parent && nodeMap[item.parent]) {
-                    nodeMap[item.parent].children.push(node);
+                if (!nameToNodes[item.name]) {
+                    nameToNodes[item.name] = [];
+                }
+                nameToNodes[item.name].push(item.id);
+            });
+
+            // 第二遍：建立父子关系
+            data.forEach(item => {
+                const node = nodeMap[item.id];
+                const parentName = item.parentName;
+                
+                // 上级部门为空 → 第一层级（根节点）
+                if (!parentName || parentName.trim() === '') {
+                    node.parentId = null;
+                } else {
+                    // 查找上级部门对应的节点
+                    const possibleParents = nameToNodes[parentName] || [];
+                    if (possibleParents.length > 0) {
+                        // 找到上级部门，建立关联
+                        node.parentId = possibleParents[possibleParents.length - 1];
+                    } else {
+                        // 上级部门不在数据中，该节点也作为根节点
+                        node.parentId = null;
+                    }
+                }
+            });
+
+            // 建立children关系
+            const roots = [];
+            Object.values(nodeMap).forEach(node => {
+                if (node.parentId && nodeMap[node.parentId]) {
+                    nodeMap[node.parentId].children.push(node);
                 } else {
                     roots.push(node);
                 }
             });
 
+            // 设置层级
             function setLevel(node, level) {
                 node.level = level;
                 maxLevel = Math.max(maxLevel, level);
@@ -453,6 +546,8 @@
         function initializeConfig() {
             levelConfig = {};
             levelSpacing = {};
+            levelHSpacing = {};
+            nodeOffsets = {};
             
             for (let i = 0; i <= maxLevel; i++) {
                 if (i === 0) {
@@ -463,6 +558,7 @@
                     levelConfig[i] = { width: 50, height: 100, fontSize: 11, direction: 'vertical' };
                 }
                 levelSpacing[i] = 80;
+                levelHSpacing[i] = 15; // 每个层级的默认横向间距
             }
 
             calculateLevelSizes();
@@ -471,12 +567,19 @@
             panX = 0;
             panY = 0;
             currentZoom = 1;
+            selectedNodeId = null;
         }
 
         function updateConfigPanel() {
-            const levelConfigsHtml = Object.entries(levelConfig).map(([level, config]) => `
+            // 显示所有层级配置，第一层无横向间距
+            const levelConfigsHtml = Object.entries(levelConfig)
+                .map(([level, config]) => {
+                    const levelNum = parseInt(level);
+                    const isFirstLevel = levelNum === 0;
+                    
+                    return `
                 <div class="level-item">
-                    <h4>第${parseInt(level)+1}层</h4>
+                    <h4>第${levelNum + 1}层</h4>
                     <label>宽度: <input type="number" id="width_${level}" value="${config.width}" min="30" onchange="onLevelSizeChange()"></label>
                     <label>高度: <input type="number" id="height_${level}" value="${config.height}" min="30" onchange="onLevelSizeChange()"></label>
                     <label>字号: <input type="number" id="fontSize_${level}" value="${config.fontSize}" min="8" onchange="onConfigChange()"></label>
@@ -486,8 +589,11 @@
                             <option value="vertical" ${config.direction === 'vertical' ? 'selected' : ''}>竖向</option>
                         </select>
                     </label>
+                    ${!isFirstLevel ? `<label class="spacing-label">横向间距: <input type="number" id="hspacing_${level}" value="${levelHSpacing[level] || 15}" min="5" max="100" onchange="onConfigChange()">px</label>` : ''}
                 </div>
-            `).join('');
+            `;
+            }).join('');
+            
             document.getElementById('levelConfigs').innerHTML = levelConfigsHtml;
         }
 
@@ -502,7 +608,6 @@
         }
 
         function onConfigChange() {
-            globalHSpacing = parseInt(document.getElementById('globalHSpacing')?.value) || 15;
             const globalVSpacing = parseInt(document.getElementById('globalVSpacing')?.value) || 80;
             
             Object.keys(levelSpacing).forEach(level => {
@@ -512,6 +617,14 @@
             Object.keys(levelConfig).forEach(level => {
                 levelConfig[level].fontSize = parseInt(document.getElementById(`fontSize_${level}`)?.value) || 13;
                 levelConfig[level].direction = document.getElementById(`direction_${level}`)?.value || 'horizontal';
+            });
+
+            // 读取每个层级的横向间距
+            Object.keys(levelHSpacing).forEach(level => {
+                const input = document.getElementById(`hspacing_${level}`);
+                if (input) {
+                    levelHSpacing[level] = parseInt(input.value) || 15;
+                }
             });
 
             renderChart();
@@ -525,48 +638,60 @@
                 if (node.children.length === 0 || collapsedNodes.has(node.id)) {
                     return config.width;
                 }
+                // 使用该节点的层级间距（子节点所在的层级）
+                const childLevel = node.children[0].level;
+                const hSpacing = levelHSpacing[childLevel] || 15;
+                
                 const childrenWidth = node.children.reduce((sum, child) => {
-                    return sum + getSubtreeWidth(child) + globalHSpacing;
-                }, -globalHSpacing);
+                    return sum + getSubtreeWidth(child) + hSpacing;
+                }, -hSpacing);
                 return Math.max(config.width, childrenWidth);
             }
 
             function layoutNode(node, leftBound, y) {
                 const config = levelConfig[node.level] || levelConfig[0];
                 const subtreeWidth = getSubtreeWidth(node);
-                const x = leftBound + (subtreeWidth - config.width) / 2;
+                
+                // 基础位置 + 用户拖拽偏移
+                const baseX = leftBound + (subtreeWidth - config.width) / 2;
+                const offsetX = nodeOffsets[node.id] || 0;
+                const x = baseX + offsetX;
                 
                 nodePositions[node.id] = { x, y, width: config.width, height: config.height };
 
                 if (node.children.length > 0 && !collapsedNodes.has(node.id)) {
                     const spacing = levelSpacing[node.level] || 80;
                     const childY = y + config.height + spacing;
+                    const childLevel = node.children[0].level;
+                    const hSpacing = levelHSpacing[childLevel] || 15;
                     
                     let totalChildWidth = node.children.reduce((sum, child) => {
-                        return sum + getSubtreeWidth(child) + globalHSpacing;
-                    }, -globalHSpacing);
+                        return sum + getSubtreeWidth(child) + hSpacing;
+                    }, -hSpacing);
                     
+                    // 居中分布 + 考虑父节点的偏移
                     let childLeft = leftBound + (subtreeWidth - totalChildWidth) / 2;
                     
                     node.children.forEach(child => {
                         const childWidth = getSubtreeWidth(child);
                         layoutNode(child, childLeft, childY);
-                        childLeft += childWidth + globalHSpacing;
+                        childLeft += childWidth + hSpacing;
                     });
                 }
             }
 
             let totalWidth = 0;
+            const rootHSpacing = levelHSpacing[1] || 15; // 第一层子节点的间距
             treeData.roots.forEach(root => {
-                totalWidth += getSubtreeWidth(root) + globalHSpacing;
+                totalWidth += getSubtreeWidth(root) + rootHSpacing;
             });
-            totalWidth -= globalHSpacing;
+            totalWidth -= rootHSpacing;
 
             let currentX = 0;
             treeData.roots.forEach(root => {
                 const width = getSubtreeWidth(root);
                 layoutNode(root, currentX, 0);
-                currentX += width + globalHSpacing;
+                currentX += width + rootHSpacing;
             });
 
             let minX = Infinity, maxX = -Infinity, maxY = 0;
@@ -598,14 +723,16 @@
             g.setAttribute('id', 'mainGroup');
             svg.appendChild(g);
 
+            // 先绘制连接线
             allNodes.forEach(node => {
-                if (node.parent && !collapsedNodes.has(node.parent)) {
+                if (node.parentId && !collapsedNodes.has(node.parentId)) {
                     drawEdge(g, node);
                 }
             });
 
+            // 再绘制节点
             allNodes.forEach(node => {
-                const parentCollapsed = node.parent && collapsedNodes.has(node.parent);
+                const parentCollapsed = node.parentId && collapsedNodes.has(node.parentId);
                 if (!parentCollapsed) {
                     drawNode(g, node);
                 }
@@ -625,8 +752,11 @@
 
             const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             g.setAttribute('class', 'node');
+            g.setAttribute('data-node-id', node.id);
 
+            // 绘制形状
             const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('class', 'node-shape hoverable');
             rect.setAttribute('x', pos.x);
             rect.setAttribute('y', pos.y);
             rect.setAttribute('width', config.width);
@@ -635,13 +765,20 @@
             rect.setAttribute('fill', NODE_COLOR.fill);
             rect.setAttribute('stroke', NODE_COLOR.stroke);
             rect.setAttribute('stroke-width', '2');
+            
+            // 选中状态
+            if (selectedNodeId === node.id) {
+                rect.classList.add('selected');
+            }
             g.appendChild(rect);
 
+            // 绘制文字
             const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             text.setAttribute('fill', NODE_COLOR.text);
             text.setAttribute('font-size', config.fontSize);
             text.setAttribute('font-weight', 'bold');
             text.setAttribute('font-family', 'Microsoft YaHei UI, SimHei, sans-serif');
+            text.style.pointerEvents = 'none';
 
             if (config.direction === 'vertical') {
                 const chars = node.name.split('');
@@ -664,6 +801,30 @@
             }
             g.appendChild(text);
 
+            // 节点点击事件（选中/取消选中）
+            rect.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (selectedNodeId === node.id) {
+                    selectedNodeId = null;
+                } else {
+                    selectedNodeId = node.id;
+                }
+                updateNodeSelection();
+            });
+
+            // 节点拖拽
+            rect.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                isDraggingNode = true;
+                selectedNodeId = node.id;
+                nodeStartX = nodeOffsets[node.id] || 0;
+                nodeStartMouseX = e.clientX;
+                document.getElementById('canvasWrapper').classList.add('node-selected');
+                updateNodeSelection();
+            });
+
+            // 折叠按钮
             if (node.children.length > 0) {
                 const btnG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 btnG.setAttribute('class', 'collapse-btn');
@@ -704,11 +865,22 @@
             parent.appendChild(g);
         }
 
+        function updateNodeSelection() {
+            document.querySelectorAll('.node-shape').forEach(rect => {
+                const nodeId = rect.parentElement.getAttribute('data-node-id');
+                if (nodeId === selectedNodeId) {
+                    rect.classList.add('selected');
+                } else {
+                    rect.classList.remove('selected');
+                }
+            });
+        }
+
         function drawEdge(parent, node) {
             const config = levelConfig[node.level] || levelConfig[0];
             const parentConfig = levelConfig[node.level - 1] || levelConfig[0];
             const pos = nodePositions[node.id];
-            const parentPos = nodePositions[node.parent];
+            const parentPos = nodePositions[node.parentId];
             if (!pos || !parentPos) return;
 
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -738,31 +910,55 @@
             renderChart();
         }
 
-        // 拖拽功能
+        // 重置布局
+        function resetLayout() {
+            nodeOffsets = {};
+            selectedNodeId = null;
+            renderChart();
+        }
+
+        // 画布拖拽
         const canvasWrapper = document.getElementById('canvasWrapper');
         
         canvasWrapper.addEventListener('mousedown', (e) => {
-            if (!treeData) return;
-            isDragging = true;
+            if (!treeData || isDraggingNode) return;
+            isDraggingCanvas = true;
             lastMouseX = e.clientX;
             lastMouseY = e.clientY;
             canvasWrapper.classList.add('dragging');
         });
 
         document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            const deltaX = e.clientX - lastMouseX;
-            const deltaY = e.clientY - lastMouseY;
-            panX += deltaX;
-            panY += deltaY;
-            lastMouseX = e.clientX;
-            lastMouseY = e.clientY;
-            applyView();
+            if (isDraggingNode && selectedNodeId) {
+                // 节点横向拖拽
+                const deltaX = e.clientX - nodeStartMouseX;
+                nodeOffsets[selectedNodeId] = nodeStartX + deltaX / currentZoom;
+                renderChart();
+            } else if (isDraggingCanvas) {
+                // 画布拖拽
+                const deltaX = e.clientX - lastMouseX;
+                const deltaY = e.clientY - lastMouseY;
+                panX += deltaX;
+                panY += deltaY;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                applyView();
+            }
         });
 
         document.addEventListener('mouseup', () => {
-            isDragging = false;
+            isDraggingCanvas = false;
+            isDraggingNode = false;
             canvasWrapper.classList.remove('dragging');
+            canvasWrapper.classList.remove('node-selected');
+        });
+
+        // 点击空白处取消选中
+        canvasWrapper.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('canvas') || e.target.tagName === 'svg') {
+                selectedNodeId = null;
+                updateNodeSelection();
+            }
         });
 
         // 滚轮缩放
@@ -815,18 +1011,36 @@
         function exportPNG() {
             const svg = document.getElementById('canvas');
             
+            // 保存当前transform状态
+            const savedTransform = svg.style.transform;
+            svg.style.transform = 'none';
+            
+            // 克隆并清理
             const clone = svg.cloneNode(true);
             clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            clone.querySelectorAll('.node-shape').forEach(rect => rect.classList.remove('selected', 'hoverable'));
+            
+            // 使用viewBox确保完整导出
+            const viewBox = svg.getAttribute('viewBox');
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            
+            // 移除可能影响导出的样式
+            clone.style.transform = 'none';
+            clone.style.transformOrigin = '';
             
             const svgData = new XMLSerializer().serializeToString(clone);
+            
+            // 恢复transform
+            svg.style.transform = savedTransform;
             
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
             
             img.onload = function() {
-                canvas.width = img.width * 2;
-                canvas.height = img.height * 2;
+                canvas.width = width * 2;
+                canvas.height = height * 2;
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -846,18 +1060,35 @@
             const { jsPDF } = window.jspdf;
             const svg = document.getElementById('canvas');
             
+            // 保存当前transform状态
+            const savedTransform = svg.style.transform;
+            svg.style.transform = 'none';
+            
+            // 克隆并清理
             const clone = svg.cloneNode(true);
             clone.querySelectorAll('.collapse-btn').forEach(btn => btn.remove());
+            clone.querySelectorAll('.node-shape').forEach(rect => rect.classList.remove('selected', 'hoverable'));
+            
+            // 使用viewBox确保完整导出
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            
+            // 移除可能影响导出的样式
+            clone.style.transform = 'none';
+            clone.style.transformOrigin = '';
             
             const svgData = new XMLSerializer().serializeToString(clone);
+            
+            // 恢复transform
+            svg.style.transform = savedTransform;
             
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
             
             img.onload = function() {
-                canvas.width = img.width * 2;
-                canvas.height = img.height * 2;
+                canvas.width = width * 2;
+                canvas.height = height * 2;
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
